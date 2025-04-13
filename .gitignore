@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+.pnpm/
+.pnp.*
+
+# builds
+.next/
+dist/
+out/
+
+# envs
+.env
+.env.*
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# system
+.DS_Store
+.vscode/
