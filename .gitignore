@@ -20,3 +20,6 @@ pnpm-debug.log*
 # system
 .DS_Store
 .vscode/
+
+uploads/
+

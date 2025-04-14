@@ -29,3 +29,6 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
     return; // Don't call next() if there's an error, just return after sending the response
   }
 };
+
+export default authenticate;
+
