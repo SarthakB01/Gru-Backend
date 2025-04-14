@@ -1,17 +1,29 @@
 import express from 'express';
-import { authenticate } from '../middleware/authMiddleware';
-import { upload } from '../utils/multerConfig'; // assuming you have a file upload setup like Multer
+import { upload } from '../utils/multerConfig';
+import { requireAuth } from '@clerk/express';
 
 const router = express.Router();
 
-// Protect the upload route with authentication middleware and handle file upload
-router.post('/upload', authenticate, upload.single('file'), (req: express.Request, res: express.Response) => {
-  if (!req.file) {
-    res.status(400).json({ error: 'No file uploaded.' });
-    return;
-  }
+// Re-add requireAuth with proper error handling
+router.post('/', requireAuth(), (req: express.Request, res: express.Response) => {
+  console.log("Authentication successful, processing upload");
+  
+  upload.single('file')(req, res, (err: any) => {
+    if (err) {
+      console.error('File upload error:', err);
+      return res.status(400).json({ error: 'Error during file upload: ' + err.message });
+    }
 
-  res.status(200).json({ message: 'Upload route protected. File handling coming next!' });
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded.' });
+    }
+
+    res.status(200).json({ 
+      message: 'File uploaded successfully!', 
+      filename: req.file.filename,
+      path: req.file.path
+    });
+  });
 });
 
 export default router;
