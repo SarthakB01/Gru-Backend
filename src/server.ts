@@ -1,8 +1,10 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import aiRoutes from './routes/ai';
 
 const app = express();
 const PORT = 5000;
@@ -46,6 +48,9 @@ app.use(cors({
 
 // Make uploads directory accessible
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// AI routes
+app.use('/api/ai', aiRoutes);
 
 // Root route
 app.get('/', (req: Request, res: Response) => {
