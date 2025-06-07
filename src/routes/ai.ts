@@ -16,6 +16,12 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
       return;
     }
 
+    // Check text length (BART model has a limit of 1024 tokens)
+    if (text.length > 4000) {
+      res.status(400).json({ error: 'Text is too long. Please provide text under 4000 characters.' });
+      return;
+    }
+
     // Dynamically import to support ESM module
     const { HfInference } = await import('@huggingface/inference');
     const hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
@@ -27,13 +33,23 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
         max_length: 130,
         min_length: 30,
         do_sample: false,
+        truncation: 'longest_first' // Using a valid truncation strategy
       },
     });
+
+    if (!result || !result.summary_text) {
+      throw new Error('No summary generated');
+    }
 
     res.json({ summary: result.summary_text });
   } catch (error) {
     console.error('Error in summarization:', error);
-    res.status(500).json({ error: 'Failed to summarize text' });
+    // Send more specific error message to client
+    const errorMessage = error instanceof Error ? error.message : 'Failed to summarize text';
+    res.status(500).json({ 
+      error: 'Failed to summarize text',
+      details: errorMessage
+    });
   }
 });
 
