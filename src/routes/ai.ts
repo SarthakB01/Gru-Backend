@@ -4,6 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
+import { HfInference } from '@huggingface/inference';
+import natural from 'natural';
 
 const router = express.Router();
 
@@ -39,6 +41,11 @@ const upload = multer({
 interface SummarizeRequest {
   text: string;
 }
+
+// Initialize NLP tools
+const tokenizer = new natural.WordTokenizer();
+const TfIdf = natural.TfIdf;
+const tfidf = new TfIdf();
 
 // Helper function to extract text from different file types
 async function extractTextFromFile(filePath: string, fileType: string): Promise<string> {
@@ -141,6 +148,106 @@ function checkRateLimits(headers: Record<string, string>) {
     const resetTime = new Date(parseInt(reset) * 1000);
     console.log(`Rate limit resets at: ${resetTime.toLocaleString()}`);
   }
+}
+
+// Helper function to extract key concepts from text
+function extractKeyConcepts(text: string): string[] {
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+  const concepts: string[] = [];
+  
+  sentences.forEach(sentence => {
+    const words = tokenizer.tokenize(sentence.toLowerCase());
+    if (words) {
+      // Add sentence to TF-IDF
+      tfidf.addDocument(words);
+      
+      // Get important terms
+      const terms = tfidf.listTerms(0);
+      const importantTerms = terms
+        .filter(term => term.tfidf > 0.5)
+        .map(term => term.term);
+      
+      if (importantTerms.length > 0) {
+        concepts.push(sentence.trim());
+      }
+    }
+  });
+  
+  return concepts;
+}
+
+// Helper function to generate questions from a concept
+function generateQuestion(concept: string): { question: string; options: string[]; correct: string } | null {
+  const words = tokenizer.tokenize(concept);
+  if (!words || words.length < 6) { // Require longer sentences for better questions
+    return null;
+  }
+
+  // Find important terms (nouns and verbs)
+  const keyTerms = words.filter(word => {
+    const lowerWord = word.toLowerCase();
+    return (
+      word.length > 4 && 
+      !['the', 'and', 'that', 'this', 'with', 'from', 'have', 'they', 'their', 'there'].includes(lowerWord) &&
+      !lowerWord.endsWith('ing') && // Avoid verbs in -ing form
+      !lowerWord.endsWith('ed')     // Avoid verbs in past tense
+    );
+  });
+
+  if (keyTerms.length < 2) {
+    return null;
+  }
+
+  // Select a term to remove and create a question
+  const termToRemove = keyTerms[Math.floor(Math.random() * keyTerms.length)];
+  
+  // Create a more natural question format
+  let question = concept;
+  if (concept.toLowerCase().startsWith('the')) {
+    question = 'What is ' + concept.substring(4).replace(termToRemove, '_____');
+  } else if (concept.toLowerCase().startsWith('a ') || concept.toLowerCase().startsWith('an ')) {
+    question = 'What is ' + concept.substring(2).replace(termToRemove, '_____');
+  } else {
+    question = concept.replace(termToRemove, '_____');
+  }
+
+  // Generate more sensible options
+  const options = [termToRemove];
+  
+  // Add similar but different terms as options
+  const otherTerms = keyTerms.filter(term => term !== termToRemove);
+  for (let i = 0; i < 3 && i < otherTerms.length; i++) {
+    const term = otherTerms[i];
+    // Create variations that make sense
+    if (term.endsWith('s')) {
+      options.push(term.slice(0, -1)); // Remove plural
+    } else if (!term.endsWith('s')) {
+      options.push(term + 's'); // Add plural
+    } else {
+      options.push(term);
+    }
+  }
+
+  // If we don't have enough options, add some common variations
+  while (options.length < 4) {
+    const baseTerm = options[0];
+    if (baseTerm.endsWith('y')) {
+      options.push(baseTerm.slice(0, -1) + 'ies');
+    } else if (!baseTerm.endsWith('s')) {
+      options.push(baseTerm + 's');
+    } else {
+      options.push(baseTerm.slice(0, -1));
+    }
+  }
+
+  // Shuffle options
+  options.sort(() => Math.random() - 0.5);
+
+  return {
+    question: question.trim(),
+    options: options.slice(0, 4), // Ensure exactly 4 options
+    correct: termToRemove
+  };
 }
 
 // Document summarization endpoint
@@ -299,6 +406,72 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
       error: 'Failed to summarize text',
       details: errorMessage
     });
+  }
+});
+
+// Quiz generation endpoint
+router.post('/generate-quiz', async (req: Request, res: Response) => {
+  try {
+    const { text } = req.body;
+
+    if (!text) {
+      res.status(400).json({ error: 'Text is required' });
+      return;
+    }
+
+    // Extract key concepts
+    const concepts = extractKeyConcepts(text);
+    
+    // Generate questions from concepts
+    const questions = concepts
+      .map(concept => generateQuestion(concept))
+      .filter(q => q !== null)
+      .slice(0, 5); // Limit to 5 questions
+
+    if (questions.length === 0) {
+      res.status(400).json({ error: 'Could not generate questions from the provided text' });
+      return;
+    }
+
+    res.json({ 
+      quiz: {
+        questions
+      }
+    });
+  } catch (error) {
+    console.error('Error in quiz generation:', error);
+    res.status(500).json({ error: 'Failed to generate quiz' });
+  }
+});
+
+// Text to speech endpoint
+router.post('/text-to-speech', async (req: Request, res: Response) => {
+  try {
+    const { text } = req.body;
+
+    if (!text) {
+      res.status(400).json({ error: 'Text is required' });
+      return;
+    }
+
+    const hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
+
+    // Generate speech using the text
+    const result = await hf.textToSpeech({
+      model: 'espnet/kan-bayashi_ljspeech_tts_train_tacotron2_raw_phn_tacotron_g2p_en_no_space_train',  // Changed to a free model
+      inputs: text,
+    });
+
+    // Convert the audio data to base64
+    const audioBase64 = Buffer.from(await result.arrayBuffer()).toString('base64');
+
+    res.json({ 
+      audio: audioBase64,
+      format: 'audio/wav'
+    });
+  } catch (error) {
+    console.error('Error in text-to-speech:', error);
+    res.status(500).json({ error: 'Failed to generate speech' });
   }
 });
 
