@@ -180,8 +180,9 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
     const summaries = await Promise.all(
       chunks.map(async (chunk, index) => {
         try {
+          console.log(`Processing chunk ${index + 1} of ${chunks.length}`);
           const result = await hf.summarization({
-            model: 'facebook/bart-large-cnn',
+            model: 'google/pegasus-xsum',  // Using the same model that works for text
             inputs: chunk,
             parameters: {
               max_length: 130,
@@ -196,6 +197,7 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
             checkRateLimits(result.headers as Record<string, string>);
           }
 
+          console.log(`Successfully summarized chunk ${index + 1}`);
           return result.summary_text;
         } catch (error) {
           console.error(`Error summarizing chunk ${index + 1}:`, error);
@@ -216,7 +218,7 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
 
     // Combine summaries
     const combinedSummary = summaries
-      .filter(summary => !summary.startsWith('[Error]'))
+      .filter(summary => !summary.startsWith('['))
       .join('\n\n');
     
     if (!combinedSummary) {
@@ -258,12 +260,22 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
       return;
     }
 
+    // Log API key status (without exposing the actual key)
+    const apiKey = process.env.HUGGINGFACE_API_KEY;
+    if (!apiKey) {
+      console.error('HUGGINGFACE_API_KEY is not set in environment variables');
+      res.status(500).json({ error: 'API configuration error' });
+      return;
+    }
+    console.log('API Key is configured:', apiKey ? 'Yes' : 'No');
+
     // Dynamically import to support ESM module
     const { HfInference } = await import('@huggingface/inference');
-    const hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
+    const hf = new HfInference(apiKey);
 
+    console.log('Attempting to summarize text...');
     const result = await hf.summarization({
-      model: 'facebook/bart-large-cnn',
+      model: 'google/pegasus-xsum',
       inputs: text,
       parameters: {
         max_length: 130,
@@ -274,12 +286,14 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
     });
 
     if (!result || !result.summary_text) {
+      console.error('No summary generated from API response:', result);
       throw new Error('No summary generated');
     }
 
+    console.log('Summary generated successfully');
     res.json({ summary: result.summary_text });
   } catch (error) {
-    console.error('Error in summarization:', error);
+    console.error('Detailed error in summarization:', error);
     const errorMessage = error instanceof Error ? error.message : 'Failed to summarize text';
     res.status(500).json({ 
       error: 'Failed to summarize text',
