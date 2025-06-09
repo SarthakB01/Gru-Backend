@@ -124,6 +124,25 @@ function splitTextIntoChunks(text: string, maxChunkSize: number = 2000): string[
   return chunks;
 }
 
+// Helper function to check rate limits from response headers
+function checkRateLimits(headers: Record<string, string>) {
+  const remaining = headers['x-ratelimit-remaining'];
+  const limit = headers['x-ratelimit-limit'];
+  const reset = headers['x-ratelimit-reset'];
+  
+  if (remaining && limit) {
+    console.log(`Rate Limit Status: ${remaining}/${limit} requests remaining`);
+    if (parseInt(remaining) < 10) {
+      console.warn('Warning: Approaching rate limit!');
+    }
+  }
+  
+  if (reset) {
+    const resetTime = new Date(parseInt(reset) * 1000);
+    console.log(`Rate limit resets at: ${resetTime.toLocaleString()}`);
+  }
+}
+
 // Document summarization endpoint
 router.post('/summarize-document', upload.single('document'), async (req: Request, res: Response): Promise<void> => {
   try {
@@ -151,6 +170,8 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
       return;
     }
 
+    console.log(`Processing document with ${chunks.length} chunks`);
+
     // Dynamically import to support ESM module
     const { HfInference } = await import('@huggingface/inference');
     const hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
@@ -169,9 +190,22 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
               truncation: 'longest_first'
             },
           });
+
+          // Check rate limits after each request
+          if (result.headers) {
+            checkRateLimits(result.headers as Record<string, string>);
+          }
+
           return result.summary_text;
         } catch (error) {
           console.error(`Error summarizing chunk ${index + 1}:`, error);
+          if (error instanceof Error) {
+            // Check for rate limit errors
+            if (error.message.includes('rate limit') || error.message.includes('429')) {
+              console.error('Rate limit exceeded!');
+              return `[Rate limit exceeded for section ${index + 1}]`;
+            }
+          }
           return `[Error summarizing section ${index + 1}]`;
         }
       })
@@ -190,7 +224,14 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
       return;
     }
     
-    res.json({ summary: combinedSummary });
+    res.json({ 
+      summary: combinedSummary,
+      metadata: {
+        totalChunks: chunks.length,
+        successfulSummaries: summaries.filter(s => !s.startsWith('[')).length,
+        failedSummaries: summaries.filter(s => s.startsWith('[')).length
+      }
+    });
   } catch (error) {
     console.error('Error in document summarization:', error);
     const errorMessage = error instanceof Error ? error.message : 'Failed to summarize document';
