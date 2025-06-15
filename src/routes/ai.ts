@@ -178,19 +178,30 @@ function extractKeyConcepts(text: string): string[] {
 
 // Helper function to generate questions from a concept
 function generateQuestion(concept: string): { question: string; options: string[]; correct: string } | null {
-  const words = tokenizer.tokenize(concept);
-  if (!words || words.length < 6) { // Require longer sentences for better questions
+  // Split into sentences and clean up
+  const sentences = concept
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+
+  if (sentences.length === 0) {
     return null;
   }
 
-  // Find important terms (nouns and verbs)
+  // Take the first complete sentence
+  const sentence = sentences[0];
+  const words = tokenizer.tokenize(sentence);
+  
+  if (!words || words.length < 5) {
+    return null;
+  }
+
+  // Find potential key terms (nouns and important words)
   const keyTerms = words.filter(word => {
     const lowerWord = word.toLowerCase();
     return (
-      word.length > 4 && 
-      !['the', 'and', 'that', 'this', 'with', 'from', 'have', 'they', 'their', 'there'].includes(lowerWord) &&
-      !lowerWord.endsWith('ing') && // Avoid verbs in -ing form
-      !lowerWord.endsWith('ed')     // Avoid verbs in past tense
+      word.length > 3 && 
+      !['the', 'and', 'that', 'this', 'with', 'from', 'have', 'they', 'their', 'there', 'about', 'what', 'when', 'where', 'which', 'who', 'why', 'how', 'remember', 'think', 'know', 'was', 'were', 'will', 'would', 'could', 'should', 'might', 'may', 'must', 'very', 'much', 'many', 'some', 'any', 'all', 'none', 'both', 'either', 'neither', 'each', 'every', 'few', 'several', 'most', 'more', 'less', 'least', 'most', 'more', 'less', 'least'].includes(lowerWord)
     );
   });
 
@@ -198,45 +209,44 @@ function generateQuestion(concept: string): { question: string; options: string[
     return null;
   }
 
-  // Select a term to remove and create a question
-  const termToRemove = keyTerms[Math.floor(Math.random() * keyTerms.length)];
+  // Select a term to use in the question
+  const termToUse = keyTerms[Math.floor(Math.random() * keyTerms.length)];
   
-  // Create a more natural question format
-  let question = concept;
-  if (concept.toLowerCase().startsWith('the')) {
-    question = 'What is ' + concept.substring(4).replace(termToRemove, '_____');
-  } else if (concept.toLowerCase().startsWith('a ') || concept.toLowerCase().startsWith('an ')) {
-    question = 'What is ' + concept.substring(2).replace(termToRemove, '_____');
+  // Create a question based on the sentence structure
+  let question;
+  if (sentence.toLowerCase().includes('is') || sentence.toLowerCase().includes('are')) {
+    question = sentence.replace(termToUse, '_____');
   } else {
-    question = concept.replace(termToRemove, '_____');
+    // Create a "What is" or "Which of the following" question
+    const questionType = Math.random() > 0.5 ? 'What is' : 'Which of the following';
+    question = `${questionType} ${termToUse.toLowerCase()}?`;
   }
 
-  // Generate more sensible options
-  const options = [termToRemove];
+  // Generate options
+  const options = [termToUse];
   
-  // Add similar but different terms as options
-  const otherTerms = keyTerms.filter(term => term !== termToRemove);
-  for (let i = 0; i < 3 && i < otherTerms.length; i++) {
-    const term = otherTerms[i];
-    // Create variations that make sense
-    if (term.endsWith('s')) {
-      options.push(term.slice(0, -1)); // Remove plural
-    } else if (!term.endsWith('s')) {
-      options.push(term + 's'); // Add plural
-    } else {
-      options.push(term);
-    }
-  }
+  // Add other key terms as options
+  const otherTerms = keyTerms
+    .filter(term => term !== termToUse)
+    .slice(0, 3);
 
-  // If we don't have enough options, add some common variations
+  options.push(...otherTerms);
+
+  // If we need more options, add variations of the correct answer
   while (options.length < 4) {
-    const baseTerm = options[0];
-    if (baseTerm.endsWith('y')) {
-      options.push(baseTerm.slice(0, -1) + 'ies');
-    } else if (!baseTerm.endsWith('s')) {
-      options.push(baseTerm + 's');
+    const baseTerm = termToUse;
+    let newOption = '';
+    
+    if (baseTerm.endsWith('s')) {
+      newOption = baseTerm.slice(0, -1);
+    } else if (baseTerm.endsWith('y')) {
+      newOption = baseTerm.slice(0, -1) + 'ies';
     } else {
-      options.push(baseTerm.slice(0, -1));
+      newOption = baseTerm + 's';
+    }
+    
+    if (!options.includes(newOption)) {
+      options.push(newOption);
     }
   }
 
@@ -245,9 +255,63 @@ function generateQuestion(concept: string): { question: string; options: string[
 
   return {
     question: question.trim(),
-    options: options.slice(0, 4), // Ensure exactly 4 options
-    correct: termToRemove
+    options: options.slice(0, 4),
+    correct: termToUse
   };
+}
+
+// Helper function to refine questions using LLM
+async function refineQuestions(questions: { question: string; options: string[]; correct: string }[]): Promise<{ question: string; options: string[]; correct: string }[]> {
+  try {
+    const hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
+    
+    const refinedQuestions = await Promise.all(questions.map(async (q) => {
+      const prompt = `Improve this quiz question to make it more engaging and educational while keeping the same meaning and correct answer:
+      Question: ${q.question}
+      Options: ${q.options.join(', ')}
+      Correct Answer: ${q.correct}
+      
+      Return the improved question and options in JSON format:
+      {
+        "question": "improved question",
+        "options": ["option1", "option2", "option3", "option4"],
+        "correct": "${q.correct}"
+      }`;
+
+      try {
+        const result = await hf.textGeneration({
+          model: 'bigscience/bloom-560m',
+          inputs: prompt,
+          parameters: {
+            max_new_tokens: 200,
+            temperature: 0.7,
+            top_p: 0.95,
+            return_full_text: false
+          }
+        });
+
+        try {
+          const refined = JSON.parse(result.generated_text);
+          return {
+            question: refined.question,
+            options: refined.options,
+            correct: q.correct // Keep the original correct answer
+          };
+        } catch (error) {
+          console.error('Error parsing refined question:', error);
+          return q; // Return original question if parsing fails
+        }
+      } catch (error) {
+        console.error('Error refining question:', error);
+        return q; // Return original question if refinement fails
+      }
+    }));
+
+    return refinedQuestions;
+  } catch (error) {
+    console.error('Error in question refinement:', error);
+    return questions; // Return original questions if refinement fails
+  }
 }
 
 // Document summarization endpoint
@@ -419,23 +483,47 @@ router.post('/generate-quiz', async (req: Request, res: Response) => {
       return;
     }
 
-    // Extract key concepts
-    const concepts = extractKeyConcepts(text);
+    // Split text into chunks for better question generation
+    const chunks: string[] = text.split(/\n\n+/).filter((chunk: string) => chunk.trim().length > 0);
     
-    // Generate questions from concepts
-    const questions = concepts
-      .map(concept => generateQuestion(concept))
-      .filter(q => q !== null)
-      .slice(0, 5); // Limit to 5 questions
+    // Generate questions from each chunk
+    let questions = [];
+    for (const chunk of chunks) {
+      const question = generateQuestion(chunk);
+      if (question) {
+        questions.push(question);
+        if (questions.length >= 5) break; // Stop once we have 5 questions
+      }
+    }
+
+    // If we don't have enough questions, try to generate more from the same chunks
+    while (questions.length < 5 && chunks.length > 0) {
+      for (const chunk of chunks) {
+        const question = generateQuestion(chunk);
+        if (question && !questions.some(q => q.question === question.question)) {
+          questions.push(question);
+          if (questions.length >= 5) break;
+        }
+      }
+    }
 
     if (questions.length === 0) {
       res.status(400).json({ error: 'Could not generate questions from the provided text' });
       return;
     }
 
+    // Ensure we have exactly 5 questions
+    questions = questions.slice(0, 5);
+
+    // Refine questions using LLM
+    const refinedQuestions = await refineQuestions(questions);
+
     res.json({ 
       quiz: {
-        questions
+        questions: refinedQuestions.map((q, index) => ({
+          ...q,
+          id: index + 1 // Add question ID for answer verification
+        }))
       }
     });
   } catch (error) {
@@ -474,5 +562,59 @@ router.post('/text-to-speech', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to generate speech' });
   }
 });
+
+// Answer verification endpoint
+router.post('/verify-answers', async (req: Request, res: Response) => {
+  try {
+    const { answers } = req.body;
+    
+    if (!answers || !Array.isArray(answers)) {
+      res.status(400).json({ error: 'Invalid answers format' });
+      return;
+    }
+
+    const results = answers.map(answer => {
+      const isCorrect = answer.selectedAnswer.toLowerCase() === answer.correctAnswer.toLowerCase();
+      return {
+        questionId: answer.questionId,
+        question: answer.question,
+        selectedAnswer: answer.selectedAnswer,
+        correctAnswer: answer.correctAnswer,
+        isCorrect,
+        feedback: isCorrect ? 'Correct!' : `Incorrect. The correct answer is: ${answer.correctAnswer}`
+      };
+    });
+
+    const score = results.filter(r => r.isCorrect).length;
+    const total = results.length;
+    const percentage = (score / total) * 100;
+
+    res.json({
+      results,
+      summary: {
+        score,
+        total,
+        percentage,
+        feedback: getFeedback(percentage)
+      }
+    });
+  } catch (error) {
+    console.error('Error verifying answers:', error);
+    res.status(500).json({ error: 'Failed to verify answers' });
+  }
+});
+
+// Helper function to generate feedback based on score
+function getFeedback(percentage: number): string {
+  if (percentage >= 90) {
+    return 'Excellent! You have a deep understanding of the material.';
+  } else if (percentage >= 70) {
+    return 'Good job! You have a solid grasp of the key concepts.';
+  } else if (percentage >= 50) {
+    return 'Not bad! You understand the basics, but there\'s room for improvement.';
+  } else {
+    return 'Keep studying! Focus on understanding the main concepts better.';
+  }
+}
 
 export default router;
