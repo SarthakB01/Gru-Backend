@@ -446,7 +446,12 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
 
     // Check text length
     if (text.length > 4000) {
-      res.status(400).json({ error: 'Text is too long. Please provide text under 4000 characters.', actualLength: text.length });
+      res.status(400).json({
+        error: 'Text is too long.',
+        actualLength: text.length,
+        currentCharCount: text.length,
+        maxAllowedCharCount: 4000
+      });
       return;
     }
 
@@ -519,16 +524,28 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
 });
 
 // Quiz generation endpoint
-router.post('/generate-quiz', async (req: Request, res: Response) => {
+router.post('/generate-quiz', upload.single('document'), async (req: Request, res: Response) => {
   try {
-    const { text } = req.body;
-
+    let text = req.body.text;
+    // If no text, but a file is uploaded, extract text from file
+    if (!text && req.file) {
+      const filePath = req.file.path;
+      const fileType = path.extname(req.file.originalname).toLowerCase();
+      text = await extractTextFromFile(filePath, fileType);
+      // Clean up uploaded file
+      fs.unlinkSync(filePath);
+    }
     if (!text) {
       res.status(400).json({ error: 'Text is required' });
       return;
     }
     if (text.length > 4000) {
-      res.status(400).json({ error: 'Text is too long. Please provide text under 4000 characters.', actualLength: text.length });
+      res.status(400).json({
+        error: 'Text is too long.',
+        actualLength: text.length,
+        currentCharCount: text.length,
+        maxAllowedCharCount: 4000
+      });
       return;
     }
 
