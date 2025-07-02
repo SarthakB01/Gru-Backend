@@ -6,6 +6,8 @@ import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import { HfInference } from '@huggingface/inference';
 import natural from 'natural';
+import axios from 'axios';
+import https from 'https';
 
 const router = express.Router();
 
@@ -196,57 +198,86 @@ function generateQuestion(concept: string): { question: string; options: string[
     return null;
   }
 
-  // Find potential key terms (nouns and important words)
-  const keyTerms = words.filter(word => {
-    const lowerWord = word.toLowerCase();
-    return (
-      word.length > 3 && 
-      !['the', 'and', 'that', 'this', 'with', 'from', 'have', 'they', 'their', 'there', 'about', 'what', 'when', 'where', 'which', 'who', 'why', 'how', 'remember', 'think', 'know', 'was', 'were', 'will', 'would', 'could', 'should', 'might', 'may', 'must', 'very', 'much', 'many', 'some', 'any', 'all', 'none', 'both', 'either', 'neither', 'each', 'every', 'few', 'several', 'most', 'more', 'less', 'least', 'most', 'more', 'less', 'least'].includes(lowerWord)
-    );
-  });
+  // Define important concepts and their related terms
+  const conceptMap = {
+    'artificial intelligence': ['machine learning', 'deep learning', 'neural networks', 'computer vision'],
+    'learning': ['training', 'adaptation', 'improvement', 'development'],
+    'reasoning': ['logic', 'deduction', 'inference', 'analysis'],
+    'problem-solving': ['algorithms', 'solutions', 'strategies', 'methods'],
+    'perception': ['sensing', 'recognition', 'understanding', 'interpretation'],
+    'decision-making': ['choices', 'judgment', 'evaluation', 'selection'],
+    'applications': ['uses', 'implementations', 'deployments', 'systems'],
+    'research': ['study', 'investigation', 'development', 'exploration'],
+    'goals': ['objectives', 'aims', 'targets', 'purposes'],
+    'tools': ['techniques', 'methods', 'approaches', 'technologies'],
+    'data': ['information', 'facts', 'statistics', 'knowledge'],
+    'model': ['system', 'framework', 'structure', 'design'],
+    'algorithm': ['procedure', 'process', 'method', 'technique'],
+    'system': ['framework', 'structure', 'organization', 'setup'],
+    'technology': ['innovation', 'development', 'advancement', 'progress']
+  };
 
-  if (keyTerms.length < 2) {
-    return null;
-  }
-
-  // Select a term to use in the question
-  const termToUse = keyTerms[Math.floor(Math.random() * keyTerms.length)];
+  // Find the main concept in the sentence
+  let mainConcept = '';
+  let relatedConcepts: string[] = [];
   
-  // Create a question based on the sentence structure
-  let question;
-  if (sentence.toLowerCase().includes('is') || sentence.toLowerCase().includes('are')) {
-    question = sentence.replace(termToUse, '_____');
-  } else {
-    // Create a "What is" or "Which of the following" question
-    const questionType = Math.random() > 0.5 ? 'What is' : 'Which of the following';
-    question = `${questionType} ${termToUse.toLowerCase()}?`;
-  }
-
-  // Generate options
-  const options = [termToUse];
-  
-  // Add other key terms as options
-  const otherTerms = keyTerms
-    .filter(term => term !== termToUse)
-    .slice(0, 3);
-
-  options.push(...otherTerms);
-
-  // If we need more options, add variations of the correct answer
-  while (options.length < 4) {
-    const baseTerm = termToUse;
-    let newOption = '';
-    
-    if (baseTerm.endsWith('s')) {
-      newOption = baseTerm.slice(0, -1);
-    } else if (baseTerm.endsWith('y')) {
-      newOption = baseTerm.slice(0, -1) + 'ies';
-    } else {
-      newOption = baseTerm + 's';
+  for (const [concept, related] of Object.entries(conceptMap)) {
+    if (sentence.toLowerCase().includes(concept)) {
+      mainConcept = concept;
+      relatedConcepts = related;
+      break;
     }
-    
-    if (!options.includes(newOption)) {
-      options.push(newOption);
+  }
+
+  if (!mainConcept) {
+    // If no main concept found, try to extract key terms
+    const keyTerms = words.filter(word => word.length > 4);
+    if (keyTerms.length > 0) {
+      mainConcept = keyTerms[0];
+      relatedConcepts = keyTerms.slice(1, 4);
+    } else {
+      return null;
+    }
+  }
+
+  // Generate appropriate question based on the concept and sentence structure
+  let question;
+  const lowerSentence = sentence.toLowerCase();
+
+  if (lowerSentence.includes('is the') || lowerSentence.includes('are the')) {
+    question = `What is the definition of ${mainConcept}?`;
+  } else if (lowerSentence.includes('include') || lowerSentence.includes('includes')) {
+    question = `Which of the following is a key component of ${mainConcept}?`;
+  } else if (lowerSentence.includes('founded') || lowerSentence.includes('established')) {
+    question = `When was ${mainConcept} first established as a field of study?`;
+  } else if (lowerSentence.includes('capability') || lowerSentence.includes('abilities')) {
+    question = `What is a primary capability of ${mainConcept}?`;
+  } else if (lowerSentence.includes('used') || lowerSentence.includes('uses')) {
+    question = `What is the primary use of ${mainConcept}?`;
+  } else if (lowerSentence.includes('important') || lowerSentence.includes('significance')) {
+    question = `Why is ${mainConcept} important?`;
+  } else {
+    question = `Which of the following best describes ${mainConcept}?`;
+  }
+
+  // Generate meaningful options
+  const options = [mainConcept];
+  
+  // Add related concepts as options
+  options.push(...relatedConcepts);
+
+  // If we need more options, add other relevant concepts
+  const otherConcepts = Object.keys(conceptMap)
+    .filter(concept => concept !== mainConcept)
+    .slice(0, 4 - options.length);
+
+  options.push(...otherConcepts);
+
+  // Ensure we have exactly 4 options
+  while (options.length < 4) {
+    const randomConcept = Object.keys(conceptMap)[Math.floor(Math.random() * Object.keys(conceptMap).length)];
+    if (!options.includes(randomConcept)) {
+      options.push(randomConcept);
     }
   }
 
@@ -256,62 +287,23 @@ function generateQuestion(concept: string): { question: string; options: string[
   return {
     question: question.trim(),
     options: options.slice(0, 4),
-    correct: termToUse
+    correct: mainConcept
   };
 }
 
-// Helper function to refine questions using LLM
-async function refineQuestions(questions: { question: string; options: string[]; correct: string }[]): Promise<{ question: string; options: string[]; correct: string }[]> {
-  try {
-    const hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
-    
-    const refinedQuestions = await Promise.all(questions.map(async (q) => {
-      const prompt = `Improve this quiz question to make it more engaging and educational while keeping the same meaning and correct answer:
-      Question: ${q.question}
-      Options: ${q.options.join(', ')}
-      Correct Answer: ${q.correct}
-      
-      Return the improved question and options in JSON format:
-      {
-        "question": "improved question",
-        "options": ["option1", "option2", "option3", "option4"],
-        "correct": "${q.correct}"
-      }`;
-
-      try {
-        const result = await hf.textGeneration({
-          model: 'bigscience/bloom-560m',
-          inputs: prompt,
-          parameters: {
-            max_new_tokens: 200,
-            temperature: 0.7,
-            top_p: 0.95,
-            return_full_text: false
-          }
-        });
-
-        try {
-          const refined = JSON.parse(result.generated_text);
-          return {
-            question: refined.question,
-            options: refined.options,
-            correct: q.correct // Keep the original correct answer
-          };
-        } catch (error) {
-          console.error('Error parsing refined question:', error);
-          return q; // Return original question if parsing fails
-        }
-      } catch (error) {
-        console.error('Error refining question:', error);
-        return q; // Return original question if refinement fails
-      }
-    }));
-
-    return refinedQuestions;
-  } catch (error) {
-    console.error('Error in question refinement:', error);
-    return questions; // Return original questions if refinement fails
-  }
+// Helper to calculate summary lengths
+function getSummaryLengths(text: string) {
+  const wordCount = text.split(/\s+/).length;
+  // HuggingFace models use tokens, but word count is a good proxy
+  // Most models have a max token limit (e.g., 1024 for BART, 512 for Pegasus-XSum)
+  const maxModelLimit = 512;
+  const minModelLimit = 30;
+  let max_length = Math.floor(wordCount / 3);
+  let min_length = Math.floor(wordCount / 4);
+  if (max_length > maxModelLimit) max_length = maxModelLimit;
+  if (min_length > max_length - 10) min_length = max_length - 10;
+  if (min_length < minModelLimit) min_length = minModelLimit;
+  return { max_length, min_length };
 }
 
 // Document summarization endpoint
@@ -352,12 +344,13 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
       chunks.map(async (chunk, index) => {
         try {
           console.log(`Processing chunk ${index + 1} of ${chunks.length}`);
+          const { max_length, min_length } = getSummaryLengths(chunk);
           const result = await hf.summarization({
-            model: 'google/pegasus-xsum',  // Using the same model that works for text
+            model: 'google/pegasus-xsum',
             inputs: chunk,
             parameters: {
-              max_length: 130,
-              min_length: 30,
+              max_length,
+              min_length,
               do_sample: false,
               truncation: 'longest_first'
             },
@@ -425,13 +418,13 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
       return;
     }
 
-    // Check text length (BART model has a limit of 1024 tokens)
+    // Check text length
     if (text.length > 4000) {
-      res.status(400).json({ error: 'Text is too long. Please provide text under 4000 characters.' });
+      res.status(400).json({ error: 'Text is too long. Please provide text under 4000 characters.', actualLength: text.length });
       return;
     }
 
-    // Log API key status (without exposing the actual key)
+    // Log API key status
     const apiKey = process.env.HUGGINGFACE_API_KEY;
     if (!apiKey) {
       console.error('HUGGINGFACE_API_KEY is not set in environment variables');
@@ -445,24 +438,50 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
     const hf = new HfInference(apiKey);
 
     console.log('Attempting to summarize text...');
-    const result = await hf.summarization({
-      model: 'google/pegasus-xsum',
-      inputs: text,
-      parameters: {
-        max_length: 130,
-        min_length: 30,
-        do_sample: false,
-        truncation: 'longest_first'
-      },
-    });
+    
+    try {
+      const { max_length, min_length } = getSummaryLengths(text);
+      const result = await hf.summarization({
+        model: 'facebook/bart-large-cnn',
+        inputs: text,
+        parameters: {
+          max_length,
+          min_length,
+          do_sample: false,
+          truncation: 'longest_first'
+        },
+      });
 
-    if (!result || !result.summary_text) {
-      console.error('No summary generated from API response:', result);
-      throw new Error('No summary generated');
+      if (!result || !result.summary_text) {
+        console.error('No summary generated from API response:', result);
+        throw new Error('No summary generated');
+      }
+
+      console.log('Summary generated successfully');
+      res.json({ summary: result.summary_text });
+    } catch (modelError) {
+      console.error('Error with first model, trying alternative...');
+      
+      // Try alternative model if the first one fails
+      const { max_length, min_length } = getSummaryLengths(text);
+      const alternativeResult = await hf.summarization({
+        model: 'google/pegasus-large',
+        inputs: text,
+        parameters: {
+          max_length,
+          min_length,
+          do_sample: false,
+          truncation: 'longest_first'
+        },
+      });
+
+      if (!alternativeResult || !alternativeResult.summary_text) {
+        throw new Error('No summary generated from alternative model');
+      }
+
+      console.log('Summary generated successfully with alternative model');
+      res.json({ summary: alternativeResult.summary_text });
     }
-
-    console.log('Summary generated successfully');
-    res.json({ summary: result.summary_text });
   } catch (error) {
     console.error('Detailed error in summarization:', error);
     const errorMessage = error instanceof Error ? error.message : 'Failed to summarize text';
@@ -482,53 +501,79 @@ router.post('/generate-quiz', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'Text is required' });
       return;
     }
-
-    // Split text into chunks for better question generation
-    const chunks: string[] = text.split(/\n\n+/).filter((chunk: string) => chunk.trim().length > 0);
-    
-    // Generate questions from each chunk
-    let questions = [];
-    for (const chunk of chunks) {
-      const question = generateQuestion(chunk);
-      if (question) {
-        questions.push(question);
-        if (questions.length >= 5) break; // Stop once we have 5 questions
-      }
-    }
-
-    // If we don't have enough questions, try to generate more from the same chunks
-    while (questions.length < 5 && chunks.length > 0) {
-      for (const chunk of chunks) {
-        const question = generateQuestion(chunk);
-        if (question && !questions.some(q => q.question === question.question)) {
-          questions.push(question);
-          if (questions.length >= 5) break;
-        }
-      }
-    }
-
-    if (questions.length === 0) {
-      res.status(400).json({ error: 'Could not generate questions from the provided text' });
+    if (text.length > 4000) {
+      res.status(400).json({ error: 'Text is too long. Please provide text under 4000 characters.', actualLength: text.length });
       return;
     }
 
-    // Ensure we have exactly 5 questions
-    questions = questions.slice(0, 5);
+    // Use Groq API for question generation
+    const groqApiKey = process.env.GROQ_API_KEY;
+    if (!groqApiKey) {
+      res.status(500).json({ error: 'GROQ_API_KEY is not set in environment variables' });
+      return;
+    }
+    const groqEndpoint = 'https://api.groq.com/openai/v1/chat/completions';
+    const prompt = `Generate 5 multiple-choice questions (with 4 options each and the correct answer marked with an asterisk *) based on the following text.\n\nText:\n${text}\n\nFormat:\nQ1: ...\nA. ...\nB. ...\nC. ...\nD. ...\nAnswer: ...\nQ2: ...\n...`;
 
-    // Refine questions using LLM
-    const refinedQuestions = await refineQuestions(questions);
+    const payload = {
+      model: 'llama3-70b-8192',
+      messages: [
+        { role: 'system', content: 'You are a helpful assistant that generates high-quality multiple-choice quizzes.' },
+        { role: 'user', content: prompt }
+      ],
+      max_tokens: 1024,
+      temperature: 0.7
+    };
 
-    res.json({ 
+    const groqResponse = await axios.post(groqEndpoint, payload, {
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      httpsAgent: new https.Agent({ keepAlive: true })
+    });
+
+    const content = groqResponse.data.choices?.[0]?.message?.content || '';
+
+    // Parse the generated text into questions
+    const quizQuestions = [];
+    const questionBlocks = content.split(/Q\d+:/).slice(1);
+    for (let i = 0; i < questionBlocks.length; i++) {
+      const block = questionBlocks[i].trim();
+      const lines = block.split('\n').map((l: string) => l.trim()).filter(Boolean);
+      const question = lines[0];
+      const options = [];
+      let correct = '';
+      for (const line of lines.slice(1)) {
+        if (/^A\./i.test(line)) options.push(line.replace(/^A\.\s*/, ''));
+        else if (/^B\./i.test(line)) options.push(line.replace(/^B\.\s*/, ''));
+        else if (/^C\./i.test(line)) options.push(line.replace(/^C\.\s*/, ''));
+        else if (/^D\./i.test(line)) options.push(line.replace(/^D\.\s*/, ''));
+        else if (/^Answer:/i.test(line)) correct = line.replace(/^Answer:\s*/, '');
+      }
+      // If the correct answer is marked with *, remove the asterisk
+      for (let j = 0; j < options.length; j++) {
+        if (options[j].includes('*')) {
+          correct = options[j].replace('*', '').trim();
+          options[j] = correct;
+        }
+      }
+      quizQuestions.push({
+        id: i + 1,
+        question,
+        options,
+        correct: correct
+      });
+    }
+
+    res.json({
       quiz: {
-        questions: refinedQuestions.map((q, index) => ({
-          ...q,
-          id: index + 1 // Add question ID for answer verification
-        }))
+        questions: quizQuestions
       }
     });
-  } catch (error) {
-    console.error('Error in quiz generation:', error);
-    res.status(500).json({ error: 'Failed to generate quiz' });
+  } catch (error: any) {
+    console.error('Error in quiz generation:', error?.response?.data || error);
+    res.status(500).json({ error: 'Failed to generate quiz', details: error?.response?.data || error.message });
   }
 });
 
@@ -574,7 +619,17 @@ router.post('/verify-answers', async (req: Request, res: Response) => {
     }
 
     const results = answers.map(answer => {
-      const isCorrect = answer.selectedAnswer.toLowerCase() === answer.correctAnswer.toLowerCase();
+      if (!answer.selectedAnswer || !answer.correctAnswer) {
+        return {
+          questionId: answer.questionId,
+          question: answer.question,
+          selectedAnswer: answer.selectedAnswer || '',
+          correctAnswer: answer.correctAnswer || '',
+          isCorrect: false,
+          feedback: 'No answer provided or correct answer missing.'
+        };
+      }
+      const isCorrect = String(answer.selectedAnswer).toLowerCase() === String(answer.correctAnswer).toLowerCase();
       return {
         questionId: answer.questionId,
         question: answer.question,
