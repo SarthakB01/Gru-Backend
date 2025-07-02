@@ -8,6 +8,7 @@ import { HfInference } from '@huggingface/inference';
 import natural from 'natural';
 import axios from 'axios';
 import https from 'https';
+import type { TfIdfTerm } from 'natural/lib/natural/tfidf';
 
 const router = express.Router();
 
@@ -166,8 +167,8 @@ function extractKeyConcepts(text: string): string[] {
       // Get important terms
       const terms = tfidf.listTerms(0);
       const importantTerms = terms
-        .filter(term => term.tfidf > 0.5)
-        .map(term => term.term);
+        .filter((term: TfIdfTerm) => term.tfidf > 0.5)
+        .map((term: TfIdfTerm) => term.term);
       
       if (importantTerms.length > 0) {
         concepts.push(sentence.trim());
@@ -231,7 +232,7 @@ function generateQuestion(concept: string): { question: string; options: string[
 
   if (!mainConcept) {
     // If no main concept found, try to extract key terms
-    const keyTerms = words.filter(word => word.length > 4);
+    const keyTerms = words.filter((word: string) => word.length > 4);
     if (keyTerms.length > 0) {
       mainConcept = keyTerms[0];
       relatedConcepts = keyTerms.slice(1, 4);
@@ -307,6 +308,7 @@ function getSummaryLengths(text: string) {
 }
 
 // Document summarization endpoint
+const MAX_CHUNK_SIZE = 2000; // Adjust as needed for the model's real limit
 router.post('/summarize-document', upload.single('document'), async (req: Request, res: Response): Promise<void> => {
   try {
     if (!req.file) {
@@ -325,6 +327,19 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
       return;
     }
 
+    // Check for extremely large documents before chunking
+    const MAX_TOTAL_CHARS = 40000; // Set as appropriate for your use case
+    if (text.length > MAX_TOTAL_CHARS) {
+      fs.unlinkSync(filePath);
+      res.status(400).json({
+        error: 'The uploaded document is too large to process.',
+        details: `Your document has ${text.length} characters. The maximum allowed is ${MAX_TOTAL_CHARS}. Please upload a smaller file.`,
+        currentCharCount: text.length,
+        maxAllowedCharCount: MAX_TOTAL_CHARS
+      });
+      return;
+    }
+
     // Split text into chunks if it's too long
     const chunks = splitTextIntoChunks(text);
     
@@ -335,6 +350,9 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
 
     console.log(`Processing document with ${chunks.length} chunks`);
 
+    // Track skipped chunks due to size
+    const skippedChunks: number[] = [];
+
     // Dynamically import to support ESM module
     const { HfInference } = await import('@huggingface/inference');
     const hf = new HfInference(process.env.HUGGINGFACE_API_KEY);
@@ -342,6 +360,10 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
     // Summarize each chunk
     const summaries = await Promise.all(
       chunks.map(async (chunk, index) => {
+        if (chunk.length > MAX_CHUNK_SIZE) {
+          skippedChunks.push(index + 1); // 1-based index for user clarity
+          return `[Skipped: Chunk ${index + 1} is too large for the summarization model]`;
+        }
         try {
           console.log(`Processing chunk ${index + 1} of ${chunks.length}`);
           const { max_length, min_length } = getSummaryLengths(chunk);
@@ -395,7 +417,11 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
       metadata: {
         totalChunks: chunks.length,
         successfulSummaries: summaries.filter(s => !s.startsWith('[')).length,
-        failedSummaries: summaries.filter(s => s.startsWith('[')).length
+        failedSummaries: summaries.filter(s => s.startsWith('[Error')).length,
+        skippedChunks: skippedChunks,
+        skippedChunksMessage: skippedChunks.length > 0
+          ? `The following chunks were skipped because they exceeded the model's input size limit: ${skippedChunks.join(', ')}`
+          : undefined
       }
     });
   } catch (error) {
