@@ -447,7 +447,7 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
     // Check text length
     if (text.length > 4000) {
       res.status(400).json({
-        error: 'Text is too long.',
+        error: 'Text is too long. Please ensure it is under 4000 characters.',
         actualLength: text.length,
         currentCharCount: text.length,
         maxAllowedCharCount: 4000
@@ -541,7 +541,7 @@ router.post('/generate-quiz', upload.single('document'), async (req: Request, re
     }
     if (text.length > 4000) {
       res.status(400).json({
-        error: 'Text is too long.',
+        error: 'Text is too long. Please ensure it is under 4000 characters',
         actualLength: text.length,
         currentCharCount: text.length,
         maxAllowedCharCount: 4000
