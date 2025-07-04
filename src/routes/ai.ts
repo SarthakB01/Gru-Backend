@@ -715,4 +715,44 @@ function getFeedback(percentage: number): string {
   }
 }
 
+// Chat with Gru about your document
+router.post('/chat', async (req: Request, res: Response) => {
+  try {
+    const { question, context } = req.body;
+    if (!question || !context) {
+      res.status(400).json({ error: 'Question and context are required' });
+      return;
+    }
+    const groqApiKey = process.env.GROQ_API_KEY;
+    if (!groqApiKey) {
+      res.status(500).json({ error: 'GROQ_API_KEY is not set in environment variables' });
+      return;
+    }
+    const groqEndpoint = 'https://api.groq.com/openai/v1/chat/completions';
+    const prompt = `Your name is Gru, an AI tutor. Answer the user's question based on the following context.\n\nContext:\n${context}\n\nQuestion: ${question}`;
+    const payload = {
+      model: 'llama3-70b-8192',
+      messages: [
+        { role: 'system', content: 'You are a helpful and knowledgeable study assistant. Answer questions clearly and concisely based only on the provided context.' },
+        // { role: 'system', content: 'You are Gru, an AI tutor that answers questions based on provided context.' },
+        { role: 'user', content: prompt }
+      ],
+      max_tokens: 512,
+      temperature: 0.7
+    };
+    const groqResponse = await axios.post(groqEndpoint, payload, {
+      headers: {
+        'Authorization': `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      httpsAgent: new https.Agent({ keepAlive: true })
+    });
+    const content = groqResponse.data.choices?.[0]?.message?.content || '';
+    res.json({ answer: content });
+  } catch (error: any) {
+    console.error('Error in chat endpoint:', error?.response?.data || error);
+    res.status(500).json({ error: 'Failed to get answer', details: error?.response?.data || error.message });
+  }
+});
+
 export default router;
