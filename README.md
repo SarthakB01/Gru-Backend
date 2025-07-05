@@ -13,6 +13,9 @@ pnpm install
 
 ```env
 # API Keys for AI Services
+# Get your OpenRouter API key from: https://openrouter.ai/keys
+OPENROUTER_API_KEY=your_openrouter_api_key_here
+
 # Get your Hugging Face API key from: https://huggingface.co/settings/tokens
 HUGGINGFACE_API_KEY=your_huggingface_api_key_here
 
@@ -22,13 +25,19 @@ GROQ_API_KEY=your_groq_api_key_here
 
 ## API Keys Required
 
+### OpenRouter API Key
+- Used for primary text summarization with GPT-4
+- Get your API key from: https://openrouter.ai/keys
+- Provides access to GPT-4, Claude, and other advanced models
+- Pay-per-use pricing
+
 ### Hugging Face API Key
-- Used for text summarization fallback and text-to-speech
+- Used for text-to-speech functionality
 - Get your free API key from: https://huggingface.co/settings/tokens
 - Free tier includes 30,000 requests per month
 
 ### Groq API Key
-- Used for chat, quiz generation, and primary text summarization
+- Used for chat and quiz generation
 - Get your API key from: https://console.groq.com/keys
 - Free tier includes 100 requests per minute
 

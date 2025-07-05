@@ -470,15 +470,15 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
 
     console.log('Attempting to summarize text...');
     
-    // Use Groq API for summarization
-    const groqApiKey = process.env.GROQ_API_KEY;
-    if (!groqApiKey) {
-      res.status(500).json({ error: 'GROQ_API_KEY is not set in environment variables' });
+    // Use Hugging Face for specialized summarization
+    const hfApiKey = process.env.HUGGINGFACE_API_KEY;
+    if (!hfApiKey) {
+      res.status(500).json({ error: 'HUGGINGFACE_API_KEY is not set in environment variables' });
       return;
     }
 
     // Check if text is too long and needs chunking
-    const MAX_TEXT_LENGTH = 6000; // Conservative limit for Groq API
+    const MAX_TEXT_LENGTH = 4000; // Conservative limit for Hugging Face models
     let textToSummarize = text;
     
     if (text.length > MAX_TEXT_LENGTH) {
@@ -498,34 +498,28 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
     }
     
     try {
-      const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: 'llama3-70b-8192',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert academic summarizer. Create detailed, comprehensive summaries that thoroughly explain the main concepts, key arguments, important details, and implications from academic texts. Write summaries that are genuinely useful for understanding and studying the material.'
-          },
-          {
-            role: 'user',
-            content: `Please provide a comprehensive academic summary of the following text. The summary should be detailed and thorough, covering:\n- Main concepts and definitions\n- Key arguments and points\n- Important details and examples\n- Implications and significance\n\nWrite a summary that would be genuinely useful for someone studying this material:\n\n${textToSummarize}`
-          }
-        ],
-        max_tokens: 1000, // Much higher limit for detailed academic summaries
-        temperature: 0.3
-      }, {
-        headers: {
-          'Authorization': `Bearer ${groqApiKey}`,
-          'Content-Type': 'application/json'
-        }
+      // Use a specialized summarization model
+      const { HfInference } = await import('@huggingface/inference');
+      const hf = new HfInference(hfApiKey);
+      
+      const result = await hf.summarization({
+        model: 'facebook/bart-large-cnn', // Excellent for summarization
+        inputs: textToSummarize,
+        parameters: {
+          max_length: 300,
+          min_length: 100,
+          do_sample: false,
+          truncation: 'longest_first'
+        },
       });
 
-      const summary = response.data.choices?.[0]?.message?.content;
+      const summary = result.summary_text;
       
       if (!summary) {
         throw new Error('No summary generated');
       }
 
-      // Ensure the summary ends with proper punctuation
+            // Ensure the summary ends with proper punctuation
       let finalSummary = summary.trim();
       if (!finalSummary.endsWith('.') && !finalSummary.endsWith('!') && !finalSummary.endsWith('?')) {
         finalSummary += '.';
