@@ -368,11 +368,11 @@ router.post('/summarize-document', upload.single('document'), async (req: Reques
           console.log(`Processing chunk ${index + 1} of ${chunks.length}`);
           const { max_length, min_length } = getSummaryLengths(chunk);
           const result = await hf.summarization({
-            model: 'google/pegasus-xsum',
+            model: 'google/pegasus-large',
             inputs: chunk,
             parameters: {
-              max_length,
-              min_length,
+              max_length: Math.min(max_length, 150),
+              min_length: Math.min(min_length, 50),
               do_sample: false,
               truncation: 'longest_first'
             },
@@ -444,13 +444,13 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
       return;
     }
 
-    // Check text length
-    if (text.length > 4000) {
+    // Check text length - increased limit for academic content
+    if (text.length > 8000) {
       res.status(400).json({
-        error: 'Text is too long. Please ensure it is under 4000 characters.',
+        error: 'Text is too long. Please ensure it is under 8000 characters.',
         actualLength: text.length,
         currentCharCount: text.length,
-        maxAllowedCharCount: 4000
+        maxAllowedCharCount: 8000
       });
       return;
     }
@@ -470,48 +470,76 @@ router.post('/summarize', async (req: Request<{}, {}, SummarizeRequest>, res: Re
 
     console.log('Attempting to summarize text...');
     
+    // Use Groq API for summarization
+    const groqApiKey = process.env.GROQ_API_KEY;
+    if (!groqApiKey) {
+      res.status(500).json({ error: 'GROQ_API_KEY is not set in environment variables' });
+      return;
+    }
+
+    // Check if text is too long and needs chunking
+    const MAX_TEXT_LENGTH = 6000; // Conservative limit for Groq API
+    let textToSummarize = text;
+    
+    if (text.length > MAX_TEXT_LENGTH) {
+      console.log(`Text is too long (${text.length} chars), truncating to first ${MAX_TEXT_LENGTH} characters`);
+      // Truncate to first MAX_TEXT_LENGTH characters, but try to end at a sentence
+      textToSummarize = text.substring(0, MAX_TEXT_LENGTH);
+      const lastPeriod = textToSummarize.lastIndexOf('.');
+      const lastExclamation = textToSummarize.lastIndexOf('!');
+      const lastQuestion = textToSummarize.lastIndexOf('?');
+      
+      const lastSentenceEnd = Math.max(lastPeriod, lastExclamation, lastQuestion);
+      if (lastSentenceEnd > MAX_TEXT_LENGTH * 0.8) { // If we can find a sentence end in the last 20%
+        textToSummarize = textToSummarize.substring(0, lastSentenceEnd + 1);
+      }
+      
+      console.log(`Truncated text length: ${textToSummarize.length} characters`);
+    }
+    
     try {
-      const { max_length, min_length } = getSummaryLengths(text);
-      const result = await hf.summarization({
-        model: 'facebook/bart-large-cnn',
-        inputs: text,
-        parameters: {
-          max_length,
-          min_length,
-          do_sample: false,
-          truncation: 'longest_first'
-        },
+      const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+        model: 'llama3-70b-8192',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert academic summarizer. Create detailed, comprehensive summaries that thoroughly explain the main concepts, key arguments, important details, and implications from academic texts. Write summaries that are genuinely useful for understanding and studying the material.'
+          },
+          {
+            role: 'user',
+            content: `Please provide a comprehensive academic summary of the following text. The summary should be detailed and thorough, covering:\n- Main concepts and definitions\n- Key arguments and points\n- Important details and examples\n- Implications and significance\n\nWrite a summary that would be genuinely useful for someone studying this material:\n\n${textToSummarize}`
+          }
+        ],
+        max_tokens: 1000, // Much higher limit for detailed academic summaries
+        temperature: 0.3
+      }, {
+        headers: {
+          'Authorization': `Bearer ${groqApiKey}`,
+          'Content-Type': 'application/json'
+        }
       });
 
-      if (!result || !result.summary_text) {
-        console.error('No summary generated from API response:', result);
+      const summary = response.data.choices?.[0]?.message?.content;
+      
+      if (!summary) {
         throw new Error('No summary generated');
       }
 
-      console.log('Summary generated successfully');
-      res.json({ summary: result.summary_text });
-    } catch (modelError) {
-      console.error('Error with first model, trying alternative...');
-      
-      // Try alternative model if the first one fails
-      const { max_length, min_length } = getSummaryLengths(text);
-      const alternativeResult = await hf.summarization({
-        model: 'google/pegasus-large',
-        inputs: text,
-        parameters: {
-          max_length,
-          min_length,
-          do_sample: false,
-          truncation: 'longest_first'
-        },
-      });
-
-      if (!alternativeResult || !alternativeResult.summary_text) {
-        throw new Error('No summary generated from alternative model');
+      // Ensure the summary ends with proper punctuation
+      let finalSummary = summary.trim();
+      if (!finalSummary.endsWith('.') && !finalSummary.endsWith('!') && !finalSummary.endsWith('?')) {
+        finalSummary += '.';
       }
 
-      console.log('Summary generated successfully with alternative model');
-      res.json({ summary: alternativeResult.summary_text });
+      console.log('Summary generated successfully');
+      res.json({ summary: finalSummary });
+      
+    } catch (error) {
+      console.error('Error with Groq API:', error);
+      res.status(500).json({ 
+        error: 'Failed to generate summary',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
   } catch (error) {
     console.error('Detailed error in summarization:', error);
@@ -552,8 +580,8 @@ router.post('/generate-quiz', upload.single('document'), async (req: Request, re
     // Use Groq API for question generation
     const groqApiKey = process.env.GROQ_API_KEY;
     if (!groqApiKey) {
-      res.status(500).json({ error: 'GROQ_API_KEY is not set in environment variables' });
-      return;
+      console.warn('GROQ_API_KEY is not set, falling back to Hugging Face');
+      // Continue with Hugging Face fallback instead of returning error
     }
     const groqEndpoint = 'https://api.groq.com/openai/v1/chat/completions';
     const prompt = `Generate 5 multiple-choice questions (with 4 options each and the correct answer marked with an asterisk *) based on the following text.\n\nText:\n${text}\n\nFormat:\nQ1: ...\nA. ...\nB. ...\nC. ...\nD. ...\nAnswer: ...\nQ2: ...\n...`;
@@ -567,6 +595,14 @@ router.post('/generate-quiz', upload.single('document'), async (req: Request, re
       max_tokens: 1024,
       temperature: 0.7
     };
+
+    if (!groqApiKey) {
+      res.status(500).json({ 
+        error: 'API key not configured', 
+        details: 'GROQ_API_KEY is required for quiz generation. Please set up your API key.'
+      });
+      return;
+    }
 
     const groqResponse = await axios.post(groqEndpoint, payload, {
       headers: {
@@ -725,8 +761,8 @@ router.post('/chat', async (req: Request, res: Response) => {
     }
     const groqApiKey = process.env.GROQ_API_KEY;
     if (!groqApiKey) {
-      res.status(500).json({ error: 'GROQ_API_KEY is not set in environment variables' });
-      return;
+      console.warn('GROQ_API_KEY is not set, falling back to Hugging Face');
+      // Continue with Hugging Face fallback instead of returning error
     }
     const groqEndpoint = 'https://api.groq.com/openai/v1/chat/completions';
     const prompt = `Your name is Gru, an AI tutor. Answer the user's question based on the following context.\n\nContext:\n${context}\n\nQuestion: ${question}`;
@@ -740,6 +776,14 @@ router.post('/chat', async (req: Request, res: Response) => {
       max_tokens: 512,
       temperature: 0.7
     };
+    if (!groqApiKey) {
+      res.status(500).json({ 
+        error: 'API key not configured', 
+        details: 'GROQ_API_KEY is required for chat functionality. Please set up your API key.'
+      });
+      return;
+    }
+
     const groqResponse = await axios.post(groqEndpoint, payload, {
       headers: {
         'Authorization': `Bearer ${groqApiKey}`,
