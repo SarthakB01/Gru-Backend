@@ -44,7 +44,17 @@ const upload = multer({
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(cors({
-  origin: 'http://localhost:3000' // Your frontend URL
+  origin: [
+    'http://localhost:3000', // Local development
+    'https://gru-frontend.vercel.app', // Your Vercel frontend URL
+    'https://gru-frontend-git-main.vercel.app', // Vercel preview deployments
+    'https://gru-frontend-git-develop.vercel.app', // Vercel branch deployments
+    // Add your custom domain here when you get it
+    // 'https://your-custom-domain.com',
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // Make uploads directory accessible
@@ -55,7 +65,19 @@ app.use('/api/ai', aiRoutes);
 
 // Root route
 app.get('/', (req: Request, res: Response) => {
-  res.send('Hello World!');
+  res.json({ 
+    message: 'Gru Backend is running!',
+    timestamp: new Date().toISOString(),
+    status: 'healthy'
+  });
+});
+
+// Health check endpoint
+app.get('/health', (req: Request, res: Response) => {
+  res.json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Text message endpoint
