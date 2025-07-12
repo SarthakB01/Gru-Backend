@@ -702,7 +702,18 @@ router.post('/verify-answers', async (req: Request, res: Response) => {
           feedback: 'No answer provided or correct answer missing.'
         };
       }
-      const isCorrect = String(answer.selectedAnswer).toLowerCase() === String(answer.correctAnswer).toLowerCase();
+      // Normalize answers: remove option letters, asterisks, and trim
+      function normalize(str: string) {
+        return String(str)
+          .replace(/^[A-Da-d]\.[ ]*/, '') // Remove leading option letter
+          .replace(/\*+$/, '')            // Remove trailing asterisks
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toLowerCase();
+      }
+      const userAns = normalize(answer.selectedAnswer);
+      const correctAns = normalize(answer.correctAnswer);
+      const isCorrect = userAns === correctAns;
       return {
         questionId: answer.questionId,
         question: answer.question,
@@ -748,7 +759,7 @@ function getFeedback(percentage: number): string {
 // Chat with Gru about your document
 router.post('/chat', async (req: Request, res: Response) => {
   try {
-    const { question, context } = req.body;
+    const { question, context, history } = req.body;
     if (!question || !context) {
       res.status(400).json({ error: 'Question and context are required' });
       return;
@@ -759,14 +770,30 @@ router.post('/chat', async (req: Request, res: Response) => {
       // Continue with Hugging Face fallback instead of returning error
     }
     const groqEndpoint = 'https://api.groq.com/openai/v1/chat/completions';
-    const prompt = `Your name is Gru, an AI tutor. Answer the user's question based on the following context.\n\nContext:\n${context}\n\nQuestion: ${question}`;
+    // New prompt and system message to avoid introductions
+    const prompt = `Answer the user's question based only on the following context. Do not introduce yourself. Do not say your name. Be direct and concise.\n\nContext:\n${context}\n\nQuestion: ${question}`;
+    // Build conversation history if provided
+    let messages = [
+      { role: 'system', content: 'You are a helpful and knowledgeable study assistant. Answer questions clearly and concisely based only on the provided context. Do not introduce yourself. Do not say your name. Be direct.' }
+    ];
+    if (Array.isArray(history) && history.length > 0) {
+      // Each item in history should be { role: 'user' | 'gru', content: string }
+      for (const msg of history) {
+        if (msg.role === 'user') {
+          messages.push({ role: 'user', content: msg.content });
+        } else if (msg.role === 'gru') {
+          messages.push({ role: 'assistant', content: msg.content });
+        }
+      }
+      // Add the new user question at the end
+      messages.push({ role: 'user', content: prompt });
+    } else {
+      // No history, just system and user prompt
+      messages.push({ role: 'user', content: prompt });
+    }
     const payload = {
       model: 'llama3-70b-8192',
-      messages: [
-        { role: 'system', content: 'You are a helpful and knowledgeable study assistant. Answer questions clearly and concisely based only on the provided context.' },
-        // { role: 'system', content: 'You are Gru, an AI tutor that answers questions based on provided context.' },
-        { role: 'user', content: prompt }
-      ],
+      messages,
       max_tokens: 512,
       temperature: 0.7
     };
